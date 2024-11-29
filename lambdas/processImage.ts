@@ -17,19 +17,24 @@ const tableName = process.env.TABLE_NAME;
 export const handler: SQSHandler = async (event) => {
   console.log("Event ", JSON.stringify(event));
   for (const record of event.Records) {
-    const recordBody = JSON.parse(record.body);        // Parse SQS message
-    const snsMessage = JSON.parse(recordBody.Message); // Parse SNS message
+    const recordBody = JSON.parse(record.body);        //Parse SQS message
+    const snsMessage = JSON.parse(recordBody.Message); //Parse SNS message
 
     if (snsMessage.Records) {
       console.log("Record body ", JSON.stringify(snsMessage));
       for (const messageRecord of snsMessage.Records) {
         const s3e = messageRecord.s3;
         const srcBucket = s3e.bucket.name;
-        // Object key may have spaces or unicode non-ASCII characters.
+
         const file = decodeURIComponent(s3e.object.key.replace(/\+/g, " "));
-        let origimage = null;
+
+        if (!file.endsWith(".jpeg") && !file.endsWith(".png")) {
+          console.log(`File ${file} is not a valid image type.`);
+          console.error(`File ${file} is not a valid image type.`);
+          throw new Error(`Invalid file type: ${file}`);
+        }
+
         try {
-          // Download the image from the S3 source bucket.
           const params: GetObjectCommandInput = {
             Bucket: srcBucket,
             Key: file,
@@ -46,6 +51,8 @@ export const handler: SQSHandler = async (event) => {
           console.log(`Saved the file: ${file}'s metadata to DynamoDB`);
         } catch (error) {
           console.log(error);
+          console.error(`Error processing file ${file}:`, error);
+          throw error;
         }
       }
     }

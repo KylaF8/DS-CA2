@@ -11,7 +11,8 @@ import * as iam from "aws-cdk-lib/aws-iam";
 import * as dynamodb from "aws-cdk-lib/aws-dynamodb"
 import { Construct } from "constructs";
 import { DynamoDB } from "@aws-sdk/client-dynamodb";
-// import * as sqs from 'aws-cdk-lib/aws-sqs';
+import { Duration } from "aws-cdk-lib";
+//import * as sqs from 'aws-cdk-lib/aws-sqs';
 
 export class EDAAppStack extends cdk.Stack {
   constructor(scope: Construct, id: string, props?: cdk.StackProps) {
@@ -31,9 +32,18 @@ export class EDAAppStack extends cdk.Stack {
     }
     )
 
-     // Integration infrastructure
+     //Integration infrastructure
+
+     const deadLetterQueue = new sqs.Queue(this, "dead-letter-q", {
+      retentionPeriod: Duration.minutes(10),
+    });
+
      const imageProcessQueue = new sqs.Queue(this, "img-created-queue", {
       receiveMessageWaitTime: cdk.Duration.seconds(10),
+      deadLetterQueue: {
+        queue: deadLetterQueue,
+        maxReceiveCount: 1,
+      },
     });
 
     const newImageTopic = new sns.Topic(this, "NewImageTopic", {
@@ -44,7 +54,7 @@ export class EDAAppStack extends cdk.Stack {
       receiveMessageWaitTime: cdk.Duration.seconds(10),
     });
 
-  // Lambda functions
+  //Lambda functions
 
   const processImageFn = new lambdanode.NodejsFunction(
     this,
@@ -68,9 +78,16 @@ export class EDAAppStack extends cdk.Stack {
     entry: `${__dirname}/../lambdas/mailer.ts`,
   });
 
+  const rejectionMailerFn = new lambdanode.NodejsFunction(this, "rejection-mailer-function", {
+    runtime: lambda.Runtime.NODEJS_16_X,
+    memorySize: 1024,
+    timeout: cdk.Duration.seconds(3),
+    entry: `${__dirname}/../lambdas/rejectionMailer.ts`,
+  })
+
   imagesBucket.addEventNotification(
     s3.EventType.OBJECT_CREATED,
-    new s3n.SnsDestination(newImageTopic)  // Changed
+    new s3n.SnsDestination(newImageTopic)
 );
 
 newImageTopic.addSubscription(
@@ -87,14 +104,33 @@ const newImageMailEventSource = new events.SqsEventSource(mailerQ, {
   maxBatchingWindow: cdk.Duration.seconds(5),
 }); 
 
+const newImageRejectionMailEventSource = new events.SqsEventSource(deadLetterQueue, {
+  batchSize: 5,
+  maxBatchingWindow: cdk.Duration.seconds(5),
+})
+
 processImageFn.addEventSource(newImageEventSource);
 
 mailerFn.addEventSource(newImageMailEventSource);
 
 newImageTopic.addSubscription(new subs.SqsSubscription(mailerQ));
 
+rejectionMailerFn.addEventSource(newImageRejectionMailEventSource);
+
 
 mailerFn.addToRolePolicy(
+  new iam.PolicyStatement({
+    effect: iam.Effect.ALLOW,
+    actions: [
+      "ses:SendEmail",
+      "ses:SendRawEmail",
+      "ses:SendTemplatedEmail",
+    ],
+    resources: ["*"],
+  })
+);
+
+rejectionMailerFn.addToRolePolicy(
   new iam.PolicyStatement({
     effect: iam.Effect.ALLOW,
     actions: [
