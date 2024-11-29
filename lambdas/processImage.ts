@@ -7,8 +7,12 @@ import {
   S3Client,
   PutObjectCommand,
 } from "@aws-sdk/client-s3";
+import { DynamoDBClient, PutItemCommand, PutItemCommandInput } from "@aws-sdk/client-dynamodb";
 
 const s3 = new S3Client();
+const dynamodb = new DynamoDBClient();
+
+const tableName = process.env.TABLE_NAME;
 
 export const handler: SQSHandler = async (event) => {
   console.log("Event ", JSON.stringify(event));
@@ -22,16 +26,24 @@ export const handler: SQSHandler = async (event) => {
         const s3e = messageRecord.s3;
         const srcBucket = s3e.bucket.name;
         // Object key may have spaces or unicode non-ASCII characters.
-        const srcKey = decodeURIComponent(s3e.object.key.replace(/\+/g, " "));
+        const file = decodeURIComponent(s3e.object.key.replace(/\+/g, " "));
         let origimage = null;
         try {
           // Download the image from the S3 source bucket.
           const params: GetObjectCommandInput = {
             Bucket: srcBucket,
-            Key: srcKey,
+            Key: file,
           };
-          origimage = await s3.send(new GetObjectCommand(params));
-          // Process the image ......
+          await s3.send(new GetObjectCommand(params));
+
+          const dynamoParams: PutItemCommandInput = {
+            TableName: tableName,
+            Item: {
+              ImageName: { S: file },
+            },
+          };
+          await dynamodb.send(new PutItemCommand(dynamoParams));
+          console.log(`Saved the file: ${file}'s metadata to DynamoDB`);
         } catch (error) {
           console.log(error);
         }
