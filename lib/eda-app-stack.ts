@@ -12,7 +12,9 @@ import * as dynamodb from "aws-cdk-lib/aws-dynamodb"
 import { Construct } from "constructs";
 import { DynamoDB } from "@aws-sdk/client-dynamodb";
 import { Duration } from "aws-cdk-lib";
-//import * as sqs from 'aws-cdk-lib/aws-sqs';
+import { StreamViewType } from "aws-cdk-lib/aws-dynamodb";
+import { DynamoEventSource } from "aws-cdk-lib/aws-lambda-event-sources";
+import { StartingPosition } from "aws-cdk-lib/aws-lambda";
 
 export class EDAAppStack extends cdk.Stack {
   constructor(scope: Construct, id: string, props?: cdk.StackProps) {
@@ -28,7 +30,8 @@ export class EDAAppStack extends cdk.Stack {
       partitionKey: { name: "ImageName", type: dynamodb.AttributeType.STRING }, 
       billingMode: dynamodb.BillingMode.PAY_PER_REQUEST, 
       removalPolicy: cdk.RemovalPolicy.DESTROY,
-      tableName: "imagesTable"
+      tableName: "imagesTable",
+      stream: StreamViewType.NEW_IMAGE,
     }
     )
 
@@ -101,6 +104,11 @@ export class EDAAppStack extends cdk.Stack {
     new s3n.SnsDestination(newImageTopic)
 );
 
+imagesBucket.addEventNotification(
+  s3.EventType.OBJECT_REMOVED,
+  new s3n.SnsDestination(newImageTopic)
+);
+
 newImageTopic.addSubscription(
   new subs.SqsSubscription(imageProcessQueue)
 );
@@ -140,6 +148,12 @@ newImageTopic.addSubscription(new subs.SqsSubscription(mailerQ));
 
 rejectionMailerFn.addEventSource(newImageRejectionMailEventSource);
 
+
+mailerFn.addEventSource(
+  new events.DynamoEventSource(imageTable, {
+    startingPosition: lambda.StartingPosition.LATEST,
+  })
+);
 
 mailerFn.addToRolePolicy(
   new iam.PolicyStatement({
