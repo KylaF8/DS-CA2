@@ -34,7 +34,7 @@ export class EDAAppStack extends cdk.Stack {
       stream: StreamViewType.NEW_IMAGE,
     }
     )
-
+    
      //Integration infrastructure
 
      const deadLetterQueue = new sqs.Queue(this, "dead-letter-q", {
